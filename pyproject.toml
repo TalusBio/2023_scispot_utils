@@ -9,15 +9,9 @@ authors = [{name = "Carolyn Allen"}]
 description = "Common scispot utility functions"
 requires-python = ">=3.9"
 dynamic = ["version"]
-dependencies = [
-    "requests >= 2.31.0",
-    "pydantic >= 2.0.3"
-    "jupyter[python]"
-]
 
 [project.scripts]
 download = "src.data:download"
-
 
 [tool.setuptools]
 include-package-data = false
