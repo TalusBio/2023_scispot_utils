@@ -1,3 +1,5 @@
+from typing import List, Literal
+
 import json
 import requests
 import time
@@ -9,8 +11,12 @@ class APIException(Exception):
     def __init__(self, message, endpoint, payload, res):
         self.message = message + "\n"
         self.message += "Request: " + endpoint + "\n"
-        self.message += str(json.dumps(payload, indent=4)) + "\n"
-        self.message += "Response: " + str(json.dumps(res, indent=4)) + "\n"
+        annonimized_payload = {
+            k: v if "api" not in k else "*" * len(v)
+            for k, v in payload.items()
+        }
+        self.message += str(json.dumps(annonimized_payload, indent=2)) + "\n"
+        self.message += "Response: " + str(json.dumps(res, indent=2)) + "\n"
         super().__init__(self.message)
 
 
@@ -36,7 +42,9 @@ class Labsheet:
             raise APIException("Incorrect base. Must be 'prod'")
 
     ## Supports limited column types.
+    ## Q: What are the non supported column types? - JSP
     def create(self, header_names, header_types):
+        """Creates a labsheet."""
         columns = []
         for i in range(len(header_names)):
             columns.append(
@@ -53,34 +61,87 @@ class Labsheet:
         return res
 
     def make_request(self, endpoint, payload):
+        """Makes a request to the API.
+
+        This is meant to be internal, for most cases you should use the
+        other methods (e.g. add_rows, update_rows, etc).
+        """
         payload["apiKey"] = self.api_key
         payload["manager"] = self.name
         payload["labsheet"] = self.name
         if self.verbose:
             print(self.BASE_URL + endpoint)
-            print(str(json.dumps(payload, indent=4)))
+            # This will print the api key in plaintext...
+            # which is a security vulnerability ... so lets not do that ...
+            # print(str(json.dumps(payload, indent=4)))
+            public_payload = {
+                k: "*" * len(v) if "api" in k else v
+                for k, v in payload.items()
+            }
+
+            print(str(json.dumps(public_payload, indent=4)))
         req = requests.post(url=self.BASE_URL + endpoint, json=payload)
         res = json.loads(req.text)
         return res
 
     def error_check(self, res, payload, endpoint):
-        if type(res) is dict:
-            if not "success" in res:
+        if isinstance(res, dict):
+            if "success" not in res:
                 raise APIException(
                     "An error occured: ", endpoint, payload, res
                 )
-            if res["success"] == "false" or res["success"] == False:
+
+            # When would this happen?
+            # why is this not consistent?
+            if res["success"] == "false" or not res["success"]:
                 raise APIException(
                     "An error occured: ", endpoint, payload, res
                 )
-        elif type(res) is list:
+        elif isinstance(res, list):
             for row in res:
-                if row["success"] == "false" or row["success"] == False:
+                if "success" not in row:
                     raise APIException(
                         "An error occured: ", endpoint, payload, res
                     )
 
-    def add_rows(self, rows):
+                if row["success"] == "false" or not row["success"]:
+                    raise APIException(
+                        "An error occured: ", endpoint, payload, res
+                    )
+
+    def add_rows(self, rows: List[List[str]]):
+        """Adds rows to the table (labsheet).
+
+        Parameters
+        ----------
+        rows : list of lists
+            List of rows to add. Each row is a list of values.
+            For example:
+            --data '{
+                "apiKey": "12345678-abcd-9012-efgh-345678901234",
+                "manager": "Elisa Data",
+                "rows": [
+                    [
+                        "ID-15",
+                        "Standard",
+                        "50mL",
+                        "A",
+                        "09/03/2022",
+                        "Hazardous",
+                        "Unknown",
+                        "North Lab > Well Plate 23",
+                        "134-amf"
+                    ]
+                ]}'
+
+        Notes
+        -----
+        The column order is determined by the order of the columns in the labsheet.
+        Which can be queried using the get_headers()["headers"] method.
+        Having said that there are some oddities with the API, where the first column
+        is skipped (thus not passed when adding rows), I am not sure what other columns
+        are generated.
+        """
         payload = {"rows": rows}
         res = self.make_request(self.ADD_ROWS, payload)
         print(res)
@@ -88,8 +149,10 @@ class Labsheet:
         print("successfully added rows.")
         return [row["uuid"] for row in sorted(res, key=lambda x: x["row"])]
 
-    def get_headers(self):
-        self.list_rows(0, 0)
+    def get_headers(self) -> List[str]:
+        """Returns the headers of the labsheet."""
+        res = self.list_rows(0, 0)
+        return res["headers"]
 
     # Usually, the uuid, stays packaged with the rest of the rows
     def update_rows(self, rows):
@@ -99,7 +162,50 @@ class Labsheet:
         print("successfully updated rows.")
         return res
 
-    def find_row(self, id, id_type="uuid"):
+    def update_rows_by_id(self, rows: List[dict]):
+        """Updates rows by id.
+
+        Parameters
+        ----------
+        rows : list of dicts
+            List of rows to update. Each row is a dict of values.
+            For example (from the scispot docs):
+            [{}, {"ID": "20c20", "Quantity": "78", "Comp": "c24"}]
+
+        Notes from the docs
+        -------------------
+        curl --location 'https://api.scispot.io/v2/labsheets/update-rows-by-id' \
+            --header 'Content-Type: application/json' \
+            --data '{
+            "apiKey": "12345678-abcd-9012-efgh-345678901234",
+            "manager": "Materials Manager",
+            "rows": [
+                {
+                "ID": "20c20",
+                "Quantity": "78",
+                "Comp": "c24"
+                }
+            ]
+            }'
+        """
+        payload = {"rows": rows}
+        res = self.make_request(self.UPDATE_ROWS_BY_ID, payload)
+        self.error_check(res, payload, self.UPDATE_ROWS_BY_ID)
+        print("successfully updated rows.")
+        return res
+
+    def find_row(self, id, id_type: Literal["uuid", "id", "barcode"] = "uuid"):
+        """Finds a row by id.
+
+        Examples
+        --------
+        >>> ls.find_row("b543a089-dee2-42f0-a750-91effe49841c", id_type="uuid")
+        {"headers": [...], "row": [...], "success": "true"}
+        >>> ls.find_row("1102", id_type="barcode")
+        {"rows": [[...]], "headers": [...], "success": True}
+        # Note that the response from uuid is a single list,
+        # whilst the response from barcode is a list of lists.
+        """
         if id_type == "uuid":
             payload = {"uuid": id}
             res = self.make_request(self.FIND_ROW, payload)
@@ -120,6 +226,7 @@ class Labsheet:
         return res
 
     def list_rows(self, pageSize, page=1):
+        # Q: What is the max page size? - JSP
         payload = {"pageSize": pageSize, "page": page}
         res = self.make_request(self.LIST_ROWS, payload)
         self.error_check(res, payload, self.LIST_ROWS)

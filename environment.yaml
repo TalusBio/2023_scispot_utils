@@ -24,3 +24,4 @@ dependencies:
   - scikit-learn
   - ipykernel
   - awswrangler
+  - pydantic>=2.0.1
