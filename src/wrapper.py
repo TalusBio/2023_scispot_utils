@@ -84,7 +84,12 @@ class Labsheet:
         res = json.loads(req.text)
         return res
 
-    def error_check(self, res, payload, endpoint):
+    def error_check(self, res, payload, endpoint) -> None:
+        """Checks for errors in the response.
+
+        It reads the response and raises a python error if an API
+        error is detected.
+        """
         if isinstance(res, dict):
             if "success" not in res:
                 raise APIException(
@@ -98,7 +103,40 @@ class Labsheet:
                     "An error occured: ", endpoint, payload, res
                 )
         elif isinstance(res, list):
+            """
+            Example response from the update_rows endpoint:
+            [
+            {
+                "ID": "98",
+                "updatedRows": [
+                {
+                    "uuid": "50738ad7-c7e0-44da-9a29-3c0dec898075",
+                    "success": "true"
+                }
+                ]
+            }
+            ]
+            """
             for row in res:
+                if "updatedRows" in row:
+                    for updated_row in row["updatedRows"]:
+                        if "success" not in updated_row:
+                            raise APIException(
+                                "An error occured: ", endpoint, payload, res
+                            )
+
+                        if (
+                            updated_row["success"] == "false"
+                            or not updated_row["success"]
+                        ):
+                            raise APIException(
+                                "An error occured: ",
+                                endpoint,
+                                payload,
+                                res,
+                            )
+                    return
+
                 if "success" not in row:
                     raise APIException(
                         "An error occured: ", endpoint, payload, res
